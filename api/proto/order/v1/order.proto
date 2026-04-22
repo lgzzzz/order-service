@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package order.v1;
+
+option go_package = "order-service/api/proto/order/v1;orderv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// 订单状态
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_CREATED = 1;      // 已创建
+  ORDER_STATUS_PAID = 2;         // 已支付
+  ORDER_STATUS_SHIPPED = 3;      // 已发货
+  ORDER_STATUS_COMPLETED = 4;    // 已完成
+  ORDER_STATUS_CANCELLED = 5;    // 已取消
+}
+
+// 订单事件类型
+enum OrderEventType {
+  ORDER_EVENT_TYPE_UNSPECIFIED = 0;
+  ORDER_EVENT_TYPE_CREATED = 1;   // 订单创建
+  ORDER_EVENT_TYPE_UPDATED = 2;   // 订单更新
+  ORDER_EVENT_TYPE_CANCELLED = 3; // 订单取消
+}
+
+// 订单项
+message OrderItem {
+  string id = 1;                  // 订单项ID
+  string product_id = 2;          // 商品ID
+  string product_name = 3;        // 商品名称
+  int32 quantity = 4;             // 数量
+  int64 price = 5;                // 单价（分）
+}
+
+// 订单
+message Order {
+  string id = 1;                  // 订单ID
+  int64 user_id = 2;              // 用户ID
+  OrderStatus status = 3;         // 订单状态
+  repeated OrderItem items = 4;   // 订单项
+  int64 total_amount = 5;         // 总金额（分）
+  string shipping_address = 6;    // 收货地址
+  google.protobuf.Timestamp created_at = 7;  // 创建时间
+  google.protobuf.Timestamp updated_at = 8;  // 更新时间
+}
+
+// 订单创建事件
+message OrderCreatedEvent {
+  Order order = 1;                // 订单信息
+}
+
+// 订单更新事件
+message OrderUpdatedEvent {
+  string order_id = 1;            // 订单ID
+  OrderStatus new_status = 2;     // 新状态
+  google.protobuf.Timestamp updated_at = 3;  // 更新时间
+}
+
+// 订单取消事件
+message OrderCancelledEvent {
+  string order_id = 1;            // 订单ID
+  string reason = 2;              // 取消原因
+  google.protobuf.Timestamp cancelled_at = 3; // 取消时间
+}
+
+// 订单事件（联合消息）
+message OrderEvent {
+  string event_id = 1;            // 事件ID
+  OrderEventType event_type = 2;  // 事件类型
+  google.protobuf.Timestamp occurred_at = 3; // 发生时间
+  
+  oneof event_data {
+    OrderCreatedEvent created = 4;
+    OrderUpdatedEvent updated = 5;
+    OrderCancelledEvent cancelled = 6;
+  }
+}
+
+// ========== gRPC 服务定义 ==========
+
+// 创建订单请求
+message CreateOrderRequest {
+  int64 user_id = 1;
+  int64 address_id = 2;
+  repeated OrderItem items = 3;
+}
+
+// 创建订单响应
+message CreateOrderResponse {
+  string order_id = 1;
+  Order order = 2;
+}
+
+// 查询订单请求
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+// 查询订单响应
+message GetOrderResponse {
+  Order order = 1;
+}
+
+// 更新订单状态请求
+message UpdateOrderStatusRequest {
+  string order_id = 1;
+  OrderStatus status = 2;
+}
+
+// 更新订单状态响应
+message UpdateOrderStatusResponse {
+  bool success = 1;
+}
+
+// 取消订单请求
+message CancelOrderRequest {
+  string order_id = 1;
+  string reason = 2;
+}
+
+// 取消订单响应
+message CancelOrderResponse {
+  bool success = 1;
+}
+
+// 查询订单列表请求
+message ListOrdersRequest {
+  string user_id = 1;
+  int32 page_size = 2;
+  int32 page_token = 3;
+}
+
+// 查询订单列表响应
+message ListOrdersResponse {
+  repeated Order orders = 1;
+  int32 next_page_token = 2;
+  int32 total_count = 3;
+}
+
+// 订单服务
+service OrderService {
+  // 创建订单
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+  
+  // 查询订单
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+  
+  // 更新订单状态
+  rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse);
+  
+  // 取消订单
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+  
+  // 查询订单列表
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse);
+}
