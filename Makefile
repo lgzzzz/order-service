@@ -1,56 +1,81 @@
-.PHONY: build run test clean docker protobuf wire install-protobuf-tools
+GOHOSTOS:=$(shell go env GOHOSTOS)
+GOPATH:=$(shell go env GOPATH)
+VERSION=$(shell git describe --tags --always)
 
-# 构建项目
-build:
-	@echo "Building..."
-	@go build -o bin/server ./cmd/server
+ifeq ($(GOHOSTOS), windows)
+	#the `find.exe` is different from `find` in bash/shell.
+	#to see https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/find.
+	#changed to use git-bash.exe to run find cli or other cli friendly, caused of every developer has a Git.
+	#Git_Bash= $(subst cmd\,bin\bash.exe,$(dir $(shell where git)))
+	Git_Bash=$(subst \,/,$(subst cmd\,bin\bash.exe,$(dir $(shell where git))))
+	INTERNAL_PROTO_FILES=$(shell $(Git_Bash) -c "find internal -name *.proto")
+	API_PROTO_FILES=$(shell $(Git_Bash) -c "find api -name *.proto")
+else
+	INTERNAL_PROTO_FILES=$(shell find internal -name *.proto)
+	API_PROTO_FILES=$(shell find api -name *.proto)
+endif
 
-# 运行服务
-run:
-	@echo "Starting service..."
-	@go run ./cmd/server
-
-# 运行测试
-test:
-	@echo "Running tests..."
-	@go test -v ./...
-
-# 清理
-clean:
-	@rm -rf bin/
-	@go clean
-
-# 启动 Docker 依赖
-docker:
-	@echo "Starting Docker containers..."
-	@docker-compose up -d
-
-# 停止 Docker 依赖
-docker-down:
-	@echo "Stopping Docker containers..."
-	@docker-compose down
-
-# 生成 Protobuf 代码
-protobuf:
-	@echo "Generating protobuf code..."
-	@protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		api/proto/order/v1/order.proto
-
-# 生成 Wire 依赖注入代码
-wire:
-	@echo "Generating wire..."
-	@cd cmd/server && wire
-
-# 安装 Protobuf 工具
-install-protobuf-tools:
-	@echo "Installing protobuf tools..."
-	@go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	@echo "Please also install protoc binary from: https://github.com/protocolbuffers/protobuf/releases"
-
-# 初始化项目
+.PHONY: init
+# init env
 init:
-	@echo "Initializing project..."
-	@go mod download
-	@go mod tidy
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	go install github.com/go-kratos/kratos/cmd/kratos/v2@latest
+	go install github.com/go-kratos/kratos/cmd/protoc-gen-go-http/v2@latest
+	go install github.com/google/gnostic/cmd/protoc-gen-openapi@latest
+	go install github.com/google/wire/cmd/wire@latest
+
+.PHONY: config
+# generate internal proto
+config:
+	protoc --proto_path=./internal \
+	       --proto_path=./third_party \
+ 	       --go_out=paths=source_relative:./internal \
+	       $(INTERNAL_PROTO_FILES)
+
+.PHONY: api
+# generate api proto
+api:
+	protoc --proto_path=./api \
+	       --proto_path=./third_party \
+ 	       --go_out=paths=source_relative:./api \
+ 	       --go-grpc_out=paths=source_relative:./api \
+	       --openapi_out=fq_schema_naming=true,default_response=false:. \
+	       $(API_PROTO_FILES)
+
+.PHONY: build
+# build
+build:
+	mkdir -p bin/ && go build -ldflags "-X main.Version=$(VERSION)" -o ./bin/ ./...
+
+.PHONY: generate
+# generate
+generate:
+	go generate ./...
+	go mod tidy
+
+.PHONY: all
+# generate all
+all:
+	make api
+	make config
+	make generate
+
+# show help
+help:
+	@echo ''
+	@echo 'Usage:'
+	@echo ' make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@awk '/^[a-zA-Z\-\_0-9]+:/ { \
+	helpMessage = match(lastLine, /^# (.*)/); \
+		if (helpMessage) { \
+			helpCommand = substr($$1, 0, index($$1, ":")); \
+			helpMessage = substr(lastLine, RSTART + 2, RLENGTH); \
+			printf "\033[36m%-22s\033[0m %s\n", helpCommand,helpMessage; \
+		} \
+	} \
+	{ lastLine = $$0 }' $(MAKEFILE_LIST)
+
+.DEFAULT_GOAL := help
