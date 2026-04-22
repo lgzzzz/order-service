@@ -6,6 +6,7 @@ require (
 	github.com/go-kratos/kratos/contrib/config/etcd/v2 v2.0.0-20260404020628-f149714c1d54
 	github.com/go-kratos/kratos/contrib/registry/etcd/v2 v2.0.0-20260404020628-f149714c1d54
 	github.com/go-kratos/kratos/v2 v2.9.2
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/wire v0.6.0
 	github.com/segmentio/kafka-go v0.4.47
 	go.etcd.io/etcd/client/v3 v3.6.10

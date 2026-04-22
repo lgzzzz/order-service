@@ -1,27 +1,4 @@
-# Kafka 配置
-kafka:
-  brokers:
-    - localhost:9092
-    - localhost:9093
-    - localhost:9094
-  group_id: "order-service-group"
-  order_topic: "order-events"
-  workers: 3
-  min_bytes: 10240      # 10KB
-  max_bytes: 10485760   # 10MB
-  read_timeout: 10      # 秒
-
-# 数据库配置
-database:
-  dsn: "root:password@tcp(localhost:3306)/order_service?charset=utf8mb4&parseTime=True&loc=Local"
-  max_idle_conns: 10
-  max_open_conns: 100
-
-# gRPC 配置
-grpc:
-  addr: ":50051"
-  max_connections: 1000
-
-registry:
-  endpoints: ["127.0.0.1:2379"]
-  timeout: 5
+config_center:
+  endpoints:
+    - "127.0.0.1:2379"
+  key: "order-service/configs/config.yaml"

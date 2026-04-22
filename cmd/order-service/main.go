@@ -1,79 +1,94 @@
 package main
 
 import (
-	internalconfig "order-service/internal/conf"
-	"order-service/internal/model"
-
+	"flag"
 	"os"
+
+	"order-service/internal/conf"
+	"order-service/internal/model"
 
 	"github.com/go-kratos/kratos/v2/config"
 	"github.com/go-kratos/kratos/v2/config/file"
+	etcdConfig "github.com/go-kratos/kratos/contrib/config/etcd/v2"
 	"github.com/go-kratos/kratos/v2/log"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-
-	etcdconfig "github.com/go-kratos/kratos/contrib/config/etcd/v2"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+// go build -ldflags "-X main.Version=x.y.z"
+var (
+	Version  string
+	confPath string
+)
+
+func init() {
+	flag.StringVar(&confPath, "conf", "configs/config.yaml", "config path, eg: -conf configs/config.yaml")
+	flag.Parse()
+}
 
 func main() {
 	logger := log.With(log.NewStdLogger(os.Stdout),
 		"ts", log.DefaultTimestamp,
 		"caller", log.DefaultCaller,
 		"service.name", "order-service",
-		"service.version", "1.0.0",
+		"service.version", Version,
 	)
 	h := log.NewHelper(logger)
 
-	// 1. 加载本地引导配置（包含 etcd 地址等）
+	// 1. 加载本地引导配置（包含配置中心地址等）
 	c := config.New(
 		config.WithSource(
-			file.NewSource("configs/config.yaml"),
+			file.NewSource(confPath),
 		),
 	)
+	defer c.Close()
+
 	if err := c.Load(); err != nil {
 		h.Fatalf("failed to load config: %v", err)
 	}
 
-	var bc internalconfig.Config
+	var bc conf.Bootstrap
 	if err := c.Scan(&bc); err != nil {
 		h.Fatalf("failed to scan config: %v", err)
 	}
 
-	// 2. 初始化 etcd 客户端
-	client, err := clientv3.New(clientv3.Config{
-		Endpoints: bc.Registry.Endpoints,
-	})
-	if err != nil {
-		h.Fatalf("failed to create etcd client: %v", err)
-	}
+	// 2. 从配置中心加载配置
+	if bc.ConfigCenter != nil && len(bc.ConfigCenter.Endpoints) > 0 {
+		client, err := clientv3.New(clientv3.Config{
+			Endpoints: bc.ConfigCenter.Endpoints,
+		})
+		if err != nil {
+			h.Errorf("failed to create etcd client: %v", err)
+		} else {
+			source, err := etcdConfig.New(client, etcdConfig.WithPath(bc.ConfigCenter.Key))
+			if err != nil {
+				h.Errorf("failed to create etcd config source: %v", err)
+			} else {
+				remoteConfig := config.New(
+					config.WithSource(source),
+				)
+				defer remoteConfig.Close()
 
-	// 3. 加载远程 etcd 配置
-	source, err := etcdconfig.New(client, etcdconfig.WithPath("/order-service/config"))
-	if err != nil {
-		h.Fatalf("failed to create etcd source: %v", err)
-	}
-
-	remoteConfig := config.New(
-		config.WithSource(source),
-	)
-	if err := remoteConfig.Load(); err != nil {
-		h.Fatalf("failed to load remote config: %v", err)
-	}
-
-	var cfg internalconfig.Config
-	if err := remoteConfig.Scan(&cfg); err != nil {
-		h.Fatalf("failed to scan remote config: %v", err)
+				if err := remoteConfig.Load(); err != nil {
+					h.Errorf("failed to load config from etcd: %v", err)
+				} else {
+					if err := remoteConfig.Scan(&bc); err != nil {
+						h.Errorf("failed to scan config from etcd: %v", err)
+					}
+				}
+			}
+		}
 	}
 
 	// 应用默认值
-	applyDefaults(&cfg)
+	applyDefaults(&bc)
 
 	// 初始化数据库
-	db := initDatabase(cfg.Database, logger)
+	db := initDatabase(bc.Database, logger)
 
 	// 使用 Wire 进行依赖注入
-	app, err := initApp(&cfg, db, logger)
+	app, err := initApp(&bc, db, logger)
 	if err != nil {
 		h.Fatalf("failed to init app: %v", err)
 	}
@@ -87,7 +102,7 @@ func main() {
 }
 
 // applyDefaults 设置默认值
-func applyDefaults(cfg *internalconfig.Config) {
+func applyDefaults(cfg *conf.Bootstrap) {
 	if cfg.Kafka.Workers == 0 {
 		cfg.Kafka.Workers = 3
 	}
@@ -121,7 +136,7 @@ func applyDefaults(cfg *internalconfig.Config) {
 }
 
 // initDatabase 初始化数据库连接
-func initDatabase(cfg internalconfig.DatabaseConfig, logger log.Logger) *gorm.DB {
+func initDatabase(cfg conf.DatabaseConfig, logger log.Logger) *gorm.DB {
 	h := log.NewHelper(logger)
 	db, err := gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{})
 	if err != nil {

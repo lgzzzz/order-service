@@ -1,5 +1,20 @@
 package conf
 
+// ConfigCenter 配置中心
+type ConfigCenter struct {
+	Endpoints []string `json:"endpoints" yaml:"endpoints"`
+	Key       string   `json:"key" yaml:"key"`
+}
+
+// Bootstrap 启动配置
+type Bootstrap struct {
+	Kafka        KafkaConfig    `json:"kafka" yaml:"kafka"`
+	Database     DatabaseConfig `json:"database" yaml:"database"`
+	GRPC         GRPCConfig     `json:"grpc" yaml:"grpc"`
+	Registry     RegistryConfig `json:"registry" yaml:"registry"`
+	ConfigCenter *ConfigCenter  `json:"config_center" yaml:"config_center"`
+}
+
 // Kafka 配置
 type KafkaConfig struct {
 	// Kafka 服务器地址列表
@@ -39,10 +54,12 @@ type RegistryConfig struct {
 	Timeout int `json:"timeout" yaml:"timeout"`
 }
 
-// 应用配置
-type Config struct {
-	Kafka    KafkaConfig    `json:"kafka" yaml:"kafka"`
-	Database DatabaseConfig `json:"database" yaml:"database"`
-	GRPC     GRPCConfig     `json:"grpc" yaml:"grpc"`
-	Registry RegistryConfig `json:"registry" yaml:"registry"`
+// GRPC 配置
+type GRPCConfig struct {
+	Addr           string `json:"addr" yaml:"addr"`
+	Timeout        int    `json:"timeout" yaml:"timeout"`
+	MaxConnections int    `json:"max_connections" yaml:"max_connections"`
 }
+
+// Config 应用配置 (别名，用于兼容)
+type Config = Bootstrap
