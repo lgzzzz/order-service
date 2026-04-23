@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// OrderService gRPC 订单服务实现
 type OrderService struct {
 	orderv1.UnimplementedOrderServiceServer
 
@@ -21,7 +20,6 @@ type OrderService struct {
 	log          *log.Helper
 }
 
-// NewOrderService 创建 gRPC 订单服务实例
 func NewOrderService(orderUseCase *biz.OrderUseCase, logger log.Logger) *OrderService {
 	return &OrderService{
 		orderUseCase: orderUseCase,
@@ -29,7 +27,6 @@ func NewOrderService(orderUseCase *biz.OrderUseCase, logger log.Logger) *OrderSe
 	}
 }
 
-// CreateOrder 创建订单
 func (s *OrderService) CreateOrder(ctx context.Context, req *orderv1.CreateOrderRequest) (*orderv1.CreateOrderResponse, error) {
 	s.log.Infof("gRPC CreateOrder called: user_id=%d", req.UserId)
 
@@ -60,7 +57,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *orderv1.CreateOrder
 	order, err := s.orderUseCase.CreateOrder(ctx, req.UserId, items, req.AddressId)
 	if err != nil {
 		s.log.Errorf("Failed to create order: %v", err)
-		return nil, err
+		return &orderv1.CreateOrderResponse{}, err
 	}
 
 	pbOrder := modelToProto(order)
@@ -70,7 +67,6 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *orderv1.CreateOrder
 	}, nil
 }
 
-// GetOrder 查询订单
 func (s *OrderService) GetOrder(ctx context.Context, req *orderv1.GetOrderRequest) (*orderv1.GetOrderResponse, error) {
 	s.log.Infof("gRPC GetOrder called: order_id=%s", req.OrderId)
 
@@ -81,7 +77,7 @@ func (s *OrderService) GetOrder(ctx context.Context, req *orderv1.GetOrderReques
 	order, err := s.orderUseCase.GetOrder(ctx, req.OrderId)
 	if err != nil {
 		s.log.Errorf("Failed to get order: %v", err)
-		return nil, err
+		return &orderv1.GetOrderResponse{}, err
 	}
 
 	pbOrder := modelToProto(order)
@@ -90,7 +86,6 @@ func (s *OrderService) GetOrder(ctx context.Context, req *orderv1.GetOrderReques
 	}, nil
 }
 
-// UpdateOrderStatus 更新订单状态
 func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *orderv1.UpdateOrderStatusRequest) (*orderv1.UpdateOrderStatusResponse, error) {
 	s.log.Infof("gRPC UpdateOrderStatus called: order_id=%s, status=%s", req.OrderId, req.Status.String())
 
@@ -111,7 +106,6 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *orderv1.Updat
 	}, nil
 }
 
-// CancelOrder 取消订单
 func (s *OrderService) CancelOrder(ctx context.Context, req *orderv1.CancelOrderRequest) (*orderv1.CancelOrderResponse, error) {
 	s.log.Infof("gRPC CancelOrder called: order_id=%s, reason=%s", req.OrderId, req.Reason)
 
@@ -131,7 +125,6 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *orderv1.CancelOrder
 	}, nil
 }
 
-// ListOrders 查询订单列表
 func (s *OrderService) ListOrders(ctx context.Context, req *orderv1.ListOrdersRequest) (*orderv1.ListOrdersResponse, error) {
 	s.log.Infof("gRPC ListOrders called: user_id=%s, page_size=%d", req.UserId, req.PageSize)
 
@@ -156,7 +149,7 @@ func (s *OrderService) ListOrders(ctx context.Context, req *orderv1.ListOrdersRe
 	orders, err := s.orderUseCase.ListUserOrders(ctx, userID, pageSize, offset)
 	if err != nil {
 		s.log.Errorf("Failed to list orders: %v", err)
-		return nil, err
+		return &orderv1.ListOrdersResponse{}, err
 	}
 
 	pbOrders := make([]*orderv1.Order, 0, len(orders))
@@ -177,7 +170,6 @@ func (s *OrderService) ListOrders(ctx context.Context, req *orderv1.ListOrdersRe
 	}, nil
 }
 
-// modelToProto 将模型转换为 Protobuf 格式
 func modelToProto(order *model.Order) *orderv1.Order {
 	pbItems := make([]*orderv1.OrderItem, 0, len(order.Items))
 	for _, item := range order.Items {

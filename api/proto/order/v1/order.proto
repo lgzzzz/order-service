@@ -78,6 +78,11 @@ message OrderEvent {
   }
 }
 
+message ResponseStatus {
+  int32 error_code = 1;
+  string error_message = 2;
+}
+
 // ========== gRPC 服务定义 ==========
 
 // 创建订单请求
@@ -89,8 +94,9 @@ message CreateOrderRequest {
 
 // 创建订单响应
 message CreateOrderResponse {
-  string order_id = 1;
-  Order order = 2;
+  ResponseStatus status = 1;
+  string order_id = 2;
+  Order order = 3;
 }
 
 // 查询订单请求
@@ -100,7 +106,8 @@ message GetOrderRequest {
 
 // 查询订单响应
 message GetOrderResponse {
-  Order order = 1;
+  ResponseStatus status = 1;
+  Order order = 2;
 }
 
 // 更新订单状态请求
@@ -111,7 +118,8 @@ message UpdateOrderStatusRequest {
 
 // 更新订单状态响应
 message UpdateOrderStatusResponse {
-  bool success = 1;
+  ResponseStatus status = 1;
+  bool success = 2;
 }
 
 // 取消订单请求
@@ -122,7 +130,8 @@ message CancelOrderRequest {
 
 // 取消订单响应
 message CancelOrderResponse {
-  bool success = 1;
+  ResponseStatus status = 1;
+  bool success = 2;
 }
 
 // 查询订单列表请求
@@ -134,9 +143,10 @@ message ListOrdersRequest {
 
 // 查询订单列表响应
 message ListOrdersResponse {
-  repeated Order orders = 1;
-  int32 next_page_token = 2;
-  int32 total_count = 3;
+  ResponseStatus status = 1;
+  repeated Order orders = 2;
+  int32 next_page_token = 3;
+  int32 total_count = 4;
 }
 
 // 订单服务
