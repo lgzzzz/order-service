@@ -64,6 +64,7 @@ func (r *OrderRepository) Delete(ctx context.Context, id string) error {
 func (r *OrderRepository) ListByUserID(ctx context.Context, userID int64, limit, offset int) ([]model.Order, error) {
 	var orders []model.Order
 	err := r.db.WithContext(ctx).
+		Preload("Items").
 		Where("user_id = ?", userID).
 		Order("created_at DESC").
 		Limit(limit).
@@ -86,4 +87,23 @@ func (r *OrderRepository) Exists(ctx context.Context, id string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// GetByIDempotencyKey 根据幂等Key查询订单
+func (r *OrderRepository) GetByIDempotencyKey(ctx context.Context, key string) (*model.Order, error) {
+	if key == "" {
+		return nil, nil
+	}
+	var order model.Order
+	err := r.db.WithContext(ctx).
+		Preload("Items").
+		Where("idempotency_key = ?", key).
+		First(&order).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get order by idempotency key: %w", err)
+	}
+	return &order, nil
 }

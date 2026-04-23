@@ -43,11 +43,12 @@ func ProvideOrderRepo(repo *OrderRepository) biz.OrderRepo {
 }
 
 // NewDiscovery .
-func NewDiscovery(conf *conf.Config) registry.Discovery {
+func NewDiscovery(conf *conf.Config, logger log.Logger) registry.Discovery {
 	client, err := clientv3.New(clientv3.Config{
 		Endpoints: conf.Registry.Endpoints,
 	})
 	if err != nil {
+		log.NewHelper(logger).Errorf("failed to create etcd client: %v", err)
 		panic(err)
 	}
 	return etcd.New(client)

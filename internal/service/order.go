@@ -8,6 +8,7 @@ import (
 	"order-service/internal/biz"
 	"order-service/internal/model"
 
+	"github.com/go-kratos/kratos/v2/errors"
 	"github.com/go-kratos/kratos/v2/log"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -32,8 +33,24 @@ func NewOrderService(orderUseCase *biz.OrderUseCase, logger log.Logger) *OrderSe
 func (s *OrderService) CreateOrder(ctx context.Context, req *orderv1.CreateOrderRequest) (*orderv1.CreateOrderResponse, error) {
 	s.log.Infof("gRPC CreateOrder called: user_id=%d", req.UserId)
 
+	if req.UserId <= 0 {
+		return nil, errors.BadRequest("INVALID_REQUEST", "user_id is required")
+	}
+	if req.AddressId <= 0 {
+		return nil, errors.BadRequest("INVALID_REQUEST", "address_id is required")
+	}
+	if len(req.Items) == 0 {
+		return nil, errors.BadRequest("INVALID_REQUEST", "items cannot be empty")
+	}
+
 	items := make([]model.OrderItem, 0, len(req.Items))
 	for _, item := range req.Items {
+		if item.ProductId == "" {
+			return nil, errors.BadRequest("INVALID_REQUEST", "product_id is required")
+		}
+		if item.Quantity <= 0 {
+			return nil, errors.BadRequest("INVALID_REQUEST", "quantity must be positive")
+		}
 		items = append(items, model.OrderItem{
 			ProductID: item.ProductId,
 			Quantity:  item.Quantity,
@@ -46,7 +63,6 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *orderv1.CreateOrder
 		return nil, err
 	}
 
-	// 构建响应
 	pbOrder := modelToProto(order)
 	return &orderv1.CreateOrderResponse{
 		OrderId: order.ID,
@@ -57,6 +73,10 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *orderv1.CreateOrder
 // GetOrder 查询订单
 func (s *OrderService) GetOrder(ctx context.Context, req *orderv1.GetOrderRequest) (*orderv1.GetOrderResponse, error) {
 	s.log.Infof("gRPC GetOrder called: order_id=%s", req.OrderId)
+
+	if req.OrderId == "" {
+		return nil, errors.BadRequest("INVALID_REQUEST", "order_id is required")
+	}
 
 	order, err := s.orderUseCase.GetOrder(ctx, req.OrderId)
 	if err != nil {
@@ -73,6 +93,10 @@ func (s *OrderService) GetOrder(ctx context.Context, req *orderv1.GetOrderReques
 // UpdateOrderStatus 更新订单状态
 func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *orderv1.UpdateOrderStatusRequest) (*orderv1.UpdateOrderStatusResponse, error) {
 	s.log.Infof("gRPC UpdateOrderStatus called: order_id=%s, status=%s", req.OrderId, req.Status.String())
+
+	if req.OrderId == "" {
+		return nil, errors.BadRequest("INVALID_REQUEST", "order_id is required")
+	}
 
 	newStatus := model.OrderStatus(req.Status)
 	if err := s.orderUseCase.HandleOrderUpdated(ctx, req.OrderId, newStatus); err != nil {
@@ -91,6 +115,10 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *orderv1.Updat
 func (s *OrderService) CancelOrder(ctx context.Context, req *orderv1.CancelOrderRequest) (*orderv1.CancelOrderResponse, error) {
 	s.log.Infof("gRPC CancelOrder called: order_id=%s, reason=%s", req.OrderId, req.Reason)
 
+	if req.OrderId == "" {
+		return nil, errors.BadRequest("INVALID_REQUEST", "order_id is required")
+	}
+
 	if err := s.orderUseCase.HandleOrderCancelled(ctx, req.OrderId, req.Reason); err != nil {
 		s.log.Errorf("Failed to cancel order: %v", err)
 		return &orderv1.CancelOrderResponse{
@@ -105,35 +133,46 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *orderv1.CancelOrder
 
 // ListOrders 查询订单列表
 func (s *OrderService) ListOrders(ctx context.Context, req *orderv1.ListOrdersRequest) (*orderv1.ListOrdersResponse, error) {
-	s.log.Infof("gRPC ListOrders called: user_id=%d, page_size=%d", req.UserId, req.PageSize)
+	s.log.Infof("gRPC ListOrders called: user_id=%s, page_size=%d", req.UserId, req.PageSize)
+
+	if req.UserId == "" {
+		return nil, errors.BadRequest("INVALID_REQUEST", "user_id is required")
+	}
 
 	pageSize := int(req.PageSize)
 	if pageSize <= 0 {
 		pageSize = 20
 	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
 	offset := int(req.PageToken)
 
-	userID, _ := strconv.ParseInt(req.UserId, 10, 64)
+	userID, err := strconv.ParseInt(req.UserId, 10, 64)
+	if err != nil {
+		return nil, errors.BadRequest("INVALID_REQUEST", "invalid user_id format")
+	}
+
 	orders, err := s.orderUseCase.ListUserOrders(ctx, userID, pageSize, offset)
 	if err != nil {
 		s.log.Errorf("Failed to list orders: %v", err)
 		return nil, err
 	}
 
-	// 转换为 Protobuf 格式
 	pbOrders := make([]*orderv1.Order, 0, len(orders))
 	for _, order := range orders {
 		pbOrders = append(pbOrders, modelToProto(&order))
 	}
 
-	nextPageToken := offset + pageSize
-	if nextPageToken >= len(orders) {
-		nextPageToken = 0
+	hasMore := len(orders) == pageSize
+	nextPageToken := int32(0)
+	if hasMore {
+		nextPageToken = int32(offset + pageSize)
 	}
 
 	return &orderv1.ListOrdersResponse{
 		Orders:        pbOrders,
-		NextPageToken: int32(nextPageToken),
+		NextPageToken: nextPageToken,
 		TotalCount:    int32(len(orders)),
 	}, nil
 }

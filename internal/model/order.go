@@ -37,6 +37,7 @@ type Order struct {
 	Status          OrderStatus `gorm:"type:int;index" json:"status"`
 	TotalAmount     int64       `gorm:"type:bigint" json:"total_amount"`
 	ShippingAddress string      `gorm:"type:varchar(512)" json:"shipping_address"`
+	IdempotencyKey string      `gorm:"type:varchar(64);uniqueIndex" json:"idempotency_key"`
 	CreatedAt       time.Time   `json:"created_at"`
 	UpdatedAt       time.Time   `json:"updated_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`

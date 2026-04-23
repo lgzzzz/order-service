@@ -3,11 +3,17 @@ package biz
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"order-service/internal/model"
 
 	"github.com/go-kratos/kratos/v2/log"
+	"github.com/google/uuid"
+)
+
+const (
+	DefaultTimeout = 10 * time.Second
 )
 
 type UserRepo interface {
@@ -20,6 +26,7 @@ type ProductRepo interface {
 
 type InventoryRepo interface {
 	LockStock(ctx context.Context, skuID int64, quantity int32) error
+	UnlockStock(ctx context.Context, skuID int64, quantity int32) error
 }
 
 type CartRepo interface {
@@ -32,32 +39,65 @@ type OrderRepo interface {
 	UpdateStatus(ctx context.Context, id string, status model.OrderStatus) error
 	Exists(ctx context.Context, id string) (bool, error)
 	ListByUserID(ctx context.Context, userID int64, limit, offset int) ([]model.Order, error)
+	GetByIDempotencyKey(ctx context.Context, key string) (*model.Order, error)
 }
 
 // OrderUseCase 订单服务
 type OrderUseCase struct {
-	repo          OrderRepo
-	userRepo      UserRepo
-	productRepo   ProductRepo
-	inventoryRepo InventoryRepo
-	cartRepo      CartRepo
-	log           *log.Helper
+	repo           OrderRepo
+	userRepo       UserRepo
+	productRepo    ProductRepo
+	inventoryRepo  InventoryRepo
+	cartRepo       CartRepo
+	log            *log.Helper
+	defaultTimeout time.Duration
 }
 
 // NewOrderUseCase 创建订单服务实例
 func NewOrderUseCase(repo OrderRepo, userRepo UserRepo, productRepo ProductRepo, inventoryRepo InventoryRepo, cartRepo CartRepo, logger log.Logger) *OrderUseCase {
 	return &OrderUseCase{
-		repo:          repo,
-		userRepo:      userRepo,
-		productRepo:   productRepo,
-		inventoryRepo: inventoryRepo,
-		cartRepo:      cartRepo,
-		log:           log.NewHelper(logger),
+		repo:           repo,
+		userRepo:       userRepo,
+		productRepo:    productRepo,
+		inventoryRepo:  inventoryRepo,
+		cartRepo:       cartRepo,
+		log:            log.NewHelper(logger),
+		defaultTimeout: DefaultTimeout,
 	}
 }
 
 // CreateOrder 完整下单流程
 func (s *OrderUseCase) CreateOrder(ctx context.Context, userID int64, items []model.OrderItem, addressID int64) (*model.Order, error) {
+	return s.CreateOrderWithIdempotency(ctx, userID, items, addressID, "")
+}
+
+// CreateOrderWithIdempotency 带有幂等性的创建订单
+func (s *OrderUseCase) CreateOrderWithIdempotency(ctx context.Context, userID int64, items []model.OrderItem, addressID int64, idempotencyKey string) (*model.Order, error) {
+	if len(items) == 0 {
+		return nil, fmt.Errorf("order items cannot be empty")
+	}
+	if userID <= 0 {
+		return nil, fmt.Errorf("invalid user ID")
+	}
+	if addressID <= 0 {
+		return nil, fmt.Errorf("invalid address ID")
+	}
+
+	// 幂等性检查
+	if idempotencyKey != "" {
+		existing, err := s.repo.GetByIDempotencyKey(ctx, idempotencyKey)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			return existing, nil
+		}
+	}
+
+	// 带超时的context
+	ctx, cancel := context.WithTimeout(ctx, s.defaultTimeout)
+	defer cancel()
+
 	// 1. 获取收货地址
 	address, err := s.userRepo.GetAddress(ctx, addressID)
 	if err != nil {
@@ -65,13 +105,32 @@ func (s *OrderUseCase) CreateOrder(ctx context.Context, userID int64, items []mo
 	}
 
 	var totalAmount int64
-	// 2. 校验商品并计算总价
+	lockedProducts := make([]struct {
+		pid      int64
+		quantity int32
+	}, 0, len(items))
+
+	// 2. 校验商品并计算总价，锁定库存
 	for i, item := range items {
-		pid := int64(0)
-		fmt.Sscanf(item.ProductID, "%d", &pid)
+		if item.ProductID == "" {
+			_ = s.rollbackLockedStock(ctx, lockedProducts)
+			return nil, fmt.Errorf("product ID cannot be empty")
+		}
+
+		pid, err := strconv.ParseInt(item.ProductID, 10, 64)
+		if err != nil {
+			_ = s.rollbackLockedStock(ctx, lockedProducts)
+			return nil, fmt.Errorf("invalid product ID %s: %w", item.ProductID, err)
+		}
+		if item.Quantity <= 0 {
+			_ = s.rollbackLockedStock(ctx, lockedProducts)
+			return nil, fmt.Errorf("quantity must be positive for product %s", item.ProductID)
+		}
+
 		price, name, err := s.productRepo.GetProductPrice(ctx, pid)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get product %d: %w", pid, err)
+			_ = s.rollbackLockedStock(ctx, lockedProducts)
+			return nil, fmt.Errorf("failed to get product %s: %w", item.ProductID, err)
 		}
 		items[i].Price = price
 		items[i].ProductName = name
@@ -79,13 +138,18 @@ func (s *OrderUseCase) CreateOrder(ctx context.Context, userID int64, items []mo
 
 		// 3. 锁定库存
 		if err := s.inventoryRepo.LockStock(ctx, pid, item.Quantity); err != nil {
-			return nil, fmt.Errorf("failed to lock stock for product %d: %w", pid, err)
+			_ = s.rollbackLockedStock(ctx, lockedProducts)
+			return nil, fmt.Errorf("failed to lock stock for product %s: %w", item.ProductID, err)
 		}
+		lockedProducts = append(lockedProducts, struct {
+			pid      int64
+			quantity int32
+		}{pid: pid, quantity: item.Quantity})
 	}
 
 	// 4. 创建订单对象
 	order := &model.Order{
-		ID:              fmt.Sprintf("ORD-%d", time.Now().UnixNano()),
+		ID:              "ORD-" + uuid.New().String(),
 		UserID:          userID,
 		Status:          model.OrderStatusCreated,
 		Items:           items,
@@ -95,13 +159,34 @@ func (s *OrderUseCase) CreateOrder(ctx context.Context, userID int64, items []mo
 
 	// 5. 保存到数据库
 	if err := s.repo.Create(ctx, order); err != nil {
-		return nil, err
+		if rbErr := s.rollbackLockedStock(ctx, lockedProducts); rbErr != nil {
+			s.log.Errorf("order save failed and rollback also failed: order_err=%v, rollback_err=%v", err, rbErr)
+		}
+		return nil, fmt.Errorf("failed to create order: %w", err)
 	}
 
-	// 6. 清空购物车
-	_ = s.cartRepo.ClearCart(ctx, userID)
+	// 6. 清空购物车（异步/可重试，不阻塞主流程）
+	go func(uid int64) {
+		if err := s.cartRepo.ClearCart(context.Background(), uid); err != nil {
+			s.log.Warnf("failed to clear cart for user %d: %v", uid, err)
+		}
+	}(userID)
 
 	return order, nil
+}
+
+func (s *OrderUseCase) rollbackLockedStock(ctx context.Context, lockedProducts []struct {
+	pid      int64
+	quantity int32
+}) error {
+	var lastErr error
+	for _, p := range lockedProducts {
+		if err := s.inventoryRepo.UnlockStock(ctx, p.pid, p.quantity); err != nil {
+			s.log.Errorf("failed to rollback stock for product %d: %v", p.pid, err)
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 // HandleOrderCreated 处理订单创建事件
