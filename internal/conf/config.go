@@ -13,6 +13,14 @@ type Bootstrap struct {
 	GRPC         GRPCConfig     `json:"grpc" yaml:"grpc"`
 	Registry     RegistryConfig `json:"registry" yaml:"registry"`
 	ConfigCenter *ConfigCenter  `json:"config_center" yaml:"config_center"`
+	Tracing      TracingConfig  `json:"tracing" yaml:"tracing"`
+}
+
+// TracingConfig 链路追踪配置
+type TracingConfig struct {
+	Enabled     bool    `json:"enabled" yaml:"enabled"`
+	Endpoint    string  `json:"endpoint" yaml:"endpoint"`
+	SampleRatio float64 `json:"sample_ratio" yaml:"sample_ratio"`
 }
 
 // Kafka 配置

@@ -12,24 +12,21 @@ import (
 	"gorm.io/gorm"
 )
 
-// ProviderSet is data providers.
 var ProviderSet = wire.NewSet(
 	NewData,
 	NewOrderRepository,
 	ProvideOrderRepo,
+	NewDiscovery,
 	NewUserRepo,
 	NewProductRepo,
 	NewInventoryRepo,
 	NewCartRepo,
-	NewDiscovery,
 )
 
-// Data .
 type Data struct {
 	db *gorm.DB
 }
 
-// NewData .
 func NewData(db *gorm.DB, logger log.Logger) (*Data, func(), error) {
 	cleanup := func() {
 		log.NewHelper(logger).Info("closing the data resources")
@@ -37,12 +34,10 @@ func NewData(db *gorm.DB, logger log.Logger) (*Data, func(), error) {
 	return &Data{db: db}, cleanup, nil
 }
 
-// ProvideOrderRepo 将 OrderRepository 作为 biz.OrderRepo 接口提供
 func ProvideOrderRepo(repo *OrderRepository) biz.OrderRepo {
 	return repo
 }
 
-// NewDiscovery .
 func NewDiscovery(conf *conf.Config, logger log.Logger) registry.Discovery {
 	client, err := clientv3.New(clientv3.Config{
 		Endpoints: conf.Registry.Endpoints,

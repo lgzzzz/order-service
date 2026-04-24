@@ -2,3 +2,8 @@ config_center:
   endpoints:
     - "127.0.0.1:2379"
   key: "order-service/configs/config.yaml"
+
+tracing:
+  enabled: true
+  endpoint: "localhost:4317"
+  sample_ratio: 0.1

@@ -2,19 +2,19 @@ package data
 
 import (
 	"context"
-	"fmt"
+
+	"order-service/internal/biz"
 
 	cartV1 "cart-service/api/cart/v1"
 	inventoryV1 "inventory-service/api/inventory/v1"
 	productV1 "product-service/api/product/v1"
 	userV1 "user-service/api/user/v1"
 
-	"order-service/internal/biz"
-
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/go-kratos/kratos/v2/registry"
-	kratosgrpc "github.com/go-kratos/kratos/v2/transport/grpc"
-	"google.golang.org/grpc"
+	kgrpc "github.com/go-kratos/kratos/v2/transport/grpc"
+	"github.com/lgzzzz/mall-tracing/middleware"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type userRepo struct {
@@ -22,8 +22,16 @@ type userRepo struct {
 	log    *log.Helper
 }
 
-func NewUserRepo(r registry.Discovery, logger log.Logger) biz.UserRepo {
-	conn := newGRPCClient(r, "discovery:///user-service")
+func NewUserRepo(r registry.Discovery, logger log.Logger, tracer trace.Tracer) biz.UserRepo {
+	conn, err := kgrpc.DialInsecure(
+		context.Background(),
+		kgrpc.WithEndpoint("discovery:///user-service"),
+		kgrpc.WithDiscovery(r),
+		kgrpc.WithMiddleware(middleware.ClientMiddleware(tracer)),
+	)
+	if err != nil {
+		panic(err)
+	}
 	return &userRepo{
 		client: userV1.NewUserServiceClient(conn),
 		log:    log.NewHelper(logger),
@@ -35,7 +43,7 @@ func (r *userRepo) GetAddress(ctx context.Context, id int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s %s %s %s", reply.Province, reply.City, reply.District, reply.Detail), nil
+	return reply.Province + " " + reply.City + " " + reply.District + " " + reply.Detail, nil
 }
 
 type productRepo struct {
@@ -43,8 +51,16 @@ type productRepo struct {
 	log    *log.Helper
 }
 
-func NewProductRepo(r registry.Discovery, logger log.Logger) biz.ProductRepo {
-	conn := newGRPCClient(r, "discovery:///product-service")
+func NewProductRepo(r registry.Discovery, logger log.Logger, tracer trace.Tracer) biz.ProductRepo {
+	conn, err := kgrpc.DialInsecure(
+		context.Background(),
+		kgrpc.WithEndpoint("discovery:///product-service"),
+		kgrpc.WithDiscovery(r),
+		kgrpc.WithMiddleware(middleware.ClientMiddleware(tracer)),
+	)
+	if err != nil {
+		panic(err)
+	}
 	return &productRepo{
 		client: productV1.NewProductServiceClient(conn),
 		log:    log.NewHelper(logger),
@@ -64,8 +80,16 @@ type inventoryRepo struct {
 	log    *log.Helper
 }
 
-func NewInventoryRepo(r registry.Discovery, logger log.Logger) biz.InventoryRepo {
-	conn := newGRPCClient(r, "discovery:///inventory-service")
+func NewInventoryRepo(r registry.Discovery, logger log.Logger, tracer trace.Tracer) biz.InventoryRepo {
+	conn, err := kgrpc.DialInsecure(
+		context.Background(),
+		kgrpc.WithEndpoint("discovery:///inventory-service"),
+		kgrpc.WithDiscovery(r),
+		kgrpc.WithMiddleware(middleware.ClientMiddleware(tracer)),
+	)
+	if err != nil {
+		panic(err)
+	}
 	return &inventoryRepo{
 		client: inventoryV1.NewInventoryClient(conn),
 		log:    log.NewHelper(logger),
@@ -93,8 +117,16 @@ type cartRepo struct {
 	log    *log.Helper
 }
 
-func NewCartRepo(r registry.Discovery, logger log.Logger) biz.CartRepo {
-	conn := newGRPCClient(r, "discovery:///cart-service")
+func NewCartRepo(r registry.Discovery, logger log.Logger, tracer trace.Tracer) biz.CartRepo {
+	conn, err := kgrpc.DialInsecure(
+		context.Background(),
+		kgrpc.WithEndpoint("discovery:///cart-service"),
+		kgrpc.WithDiscovery(r),
+		kgrpc.WithMiddleware(middleware.ClientMiddleware(tracer)),
+	)
+	if err != nil {
+		panic(err)
+	}
 	return &cartRepo{
 		client: cartV1.NewCartServiceClient(conn),
 		log:    log.NewHelper(logger),
@@ -106,14 +138,7 @@ func (r *cartRepo) ClearCart(ctx context.Context, userID int64) error {
 	return err
 }
 
-func newGRPCClient(r registry.Discovery, endpoint string) *grpc.ClientConn {
-	conn, err := kratosgrpc.DialInsecure(
-		context.Background(),
-		kratosgrpc.WithEndpoint(endpoint),
-		kratosgrpc.WithDiscovery(r),
-	)
-	if err != nil {
-		panic(err)
-	}
-	return conn
-}
+var _ biz.UserRepo = (*userRepo)(nil)
+var _ biz.ProductRepo = (*productRepo)(nil)
+var _ biz.InventoryRepo = (*inventoryRepo)(nil)
+var _ biz.CartRepo = (*cartRepo)(nil)

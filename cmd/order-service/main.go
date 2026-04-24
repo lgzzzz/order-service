@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
+	"time"
 
 	"order-service/internal/conf"
 	"order-service/internal/model"
@@ -11,9 +13,11 @@ import (
 	"github.com/go-kratos/kratos/v2/config/file"
 	etcdConfig "github.com/go-kratos/kratos/contrib/config/etcd/v2"
 	"github.com/go-kratos/kratos/v2/log"
+	"github.com/lgzzzz/mall-tracing/tracing"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.opentelemetry.io/otel/trace"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // go build -ldflags "-X main.Version=x.y.z"
@@ -36,7 +40,6 @@ func main() {
 	)
 	h := log.NewHelper(logger)
 
-	// 1. 加载本地引导配置（包含配置中心地址等）
 	c := config.New(
 		config.WithSource(
 			file.NewSource(confPath),
@@ -53,7 +56,6 @@ func main() {
 		h.Fatalf("failed to scan config: %v", err)
 	}
 
-	// 2. 从配置中心加载配置
 	if bc.ConfigCenter != nil && len(bc.ConfigCenter.Endpoints) > 0 {
 		client, err := clientv3.New(clientv3.Config{
 			Endpoints: bc.ConfigCenter.Endpoints,
@@ -81,39 +83,60 @@ func main() {
 		}
 	}
 
-	// 应用默认值
 	applyDefaults(&bc)
 
-	// 初始化数据库
 	db := initDatabase(bc.Database, logger)
 
-	// 使用 Wire 进行依赖注入
-	app, err := initApp(&bc, db, logger)
+	var tp trace.TracerProvider
+	tracer := tracing.NewTracer("order-service")
+	if bc.Tracing.Enabled {
+		var err error
+		tp, err = tracing.Init(tracing.Config{
+			ServiceName:  "order-service",
+			Version:      Version,
+			OTLPEndpoint: bc.Tracing.Endpoint,
+			SampleRatio:  bc.Tracing.SampleRatio,
+			Insecure:     true,
+		})
+		if err != nil {
+			h.Errorf("failed to init tracer provider: %v", err)
+		} else {
+			h.Info("Tracer provider initialized")
+		}
+	}
+
+	app, cleanup, err := initApp(&bc, db, logger, tracer)
 	if err != nil {
 		h.Fatalf("failed to init app: %v", err)
 	}
 
-	// 启动应用
 	if err := app.Run(); err != nil {
 		h.Fatalf("failed to run application: %v", err)
 	}
 
+	if tp != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracing.Shutdown(shutdownCtx, tp); err != nil {
+			h.Errorf("failed to shutdown tracer provider: %v", err)
+		}
+	}
+	cleanup()
 	h.Info("Application stopped gracefully")
 }
 
-// applyDefaults 设置默认值
 func applyDefaults(cfg *conf.Bootstrap) {
 	if cfg.Kafka.Workers == 0 {
 		cfg.Kafka.Workers = 3
 	}
 	if cfg.Kafka.MinBytes == 0 {
-		cfg.Kafka.MinBytes = 10e3 // 10KB
+		cfg.Kafka.MinBytes = 10e3
 	}
 	if cfg.Kafka.MaxBytes == 0 {
-		cfg.Kafka.MaxBytes = 10e6 // 10MB
+		cfg.Kafka.MaxBytes = 10e6
 	}
 	if cfg.Kafka.ReadTimeout == 0 {
-		cfg.Kafka.ReadTimeout = 10 // 10秒
+		cfg.Kafka.ReadTimeout = 10
 	}
 	if cfg.Database.MaxIdleConns == 0 {
 		cfg.Database.MaxIdleConns = 10
@@ -135,7 +158,6 @@ func applyDefaults(cfg *conf.Bootstrap) {
 	}
 }
 
-// initDatabase 初始化数据库连接
 func initDatabase(cfg conf.DatabaseConfig, logger log.Logger) *gorm.DB {
 	h := log.NewHelper(logger)
 	db, err := gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{})
@@ -151,7 +173,6 @@ func initDatabase(cfg conf.DatabaseConfig, logger log.Logger) *gorm.DB {
 	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
 	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
 
-	// 自动迁移表结构
 	if err := autoMigrate(db); err != nil {
 		h.Fatalf("Failed to migrate database: %v", err)
 	}
@@ -160,7 +181,6 @@ func initDatabase(cfg conf.DatabaseConfig, logger log.Logger) *gorm.DB {
 	return db
 }
 
-// autoMigrate 自动迁移数据库表
 func autoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&model.Order{},

@@ -1,6 +1,7 @@
 //go:build wireinject
 // +build wireinject
 
+//go:generate go run -mod=mod github.com/google/wire/cmd/wire
 package main
 
 import (
@@ -19,43 +20,35 @@ import (
 	transportgrpc "github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/google/wire"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
 )
 
-// initApp 初始化应用
-func initApp(cfg *conf.Config, db *gorm.DB, logger log.Logger) (*kratos.App, error) {
+func initApp(cfg *conf.Config, db *gorm.DB, logger log.Logger, tracer trace.Tracer) (*kratos.App, func(), error) {
 	wire.Build(
-		// 数据层与远程客户端
 		data.ProviderSet,
-		// 业务层
 		biz.NewOrderUseCase,
-		// 消费者
 		consumer.NewOrderConsumer,
 		ProvideKafkaConfig,
-		// gRPC 服务器
 		server.NewGRPCServer,
 		service.NewOrderService,
-		// 应用
 		NewApp,
 	)
-	return &kratos.App{}, nil
+	return &kratos.App{}, func() {}, nil
 }
 
 func ProvideKafkaConfig(cfg *conf.Config) *conf.KafkaConfig {
 	return &cfg.Kafka
 }
 
-// NewApp 创建应用实例
 func NewApp(
 	cfg *conf.Config,
 	grpcServer *transportgrpc.Server,
 	orderService *service.OrderService,
 	orderConsumer *consumer.OrderConsumer,
 ) (*kratos.App, error) {
-	// 注册 gRPC 服务
 	orderv1.RegisterOrderServiceServer(grpcServer, orderService)
 
-	// 配置 etcd 客户端
 	client, err := clientv3.New(clientv3.Config{
 		Endpoints:   cfg.Registry.Endpoints,
 		DialTimeout: time.Duration(cfg.Registry.Timeout) * time.Second,
@@ -64,7 +57,6 @@ func NewApp(
 		return nil, err
 	}
 
-	// 创建 etcd 注册中心
 	reg := etcd.New(client)
 
 	return kratos.New(
